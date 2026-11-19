@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 /*
- * Lenovo Tab M10 FHD Plus (TB-X606F / achilles6_row_wifi) Stage 1 First Light DTS.
+ * Lenovo Tab M10 FHD Plus (TB-X606F / achilles6_row_wifi) DTS.
  * SoC: MT8768WT (MT6765 family) + MT6357 PMIC.
  */
 
@@ -61,6 +61,15 @@
 		};
 	};
 
+	reg_lcm_1v8: regulator-lcm-1v8 {
+		compatible = "regulator-fixed";
+		regulator-name = "lcm-1v8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-boot-on;
+		regulator-always-on;
+	};
+
 	/delete-node/ rng;
 	/delete-node/ thermal-zones;
 
@@ -76,15 +85,14 @@
 		scp_sramSize = <0x40000>;
 	};
 
-	/*
-	 * Stock LK asserts ufdt_apply_overlay() on the on-device dtbo[0] partition.
-	 * Provide __symbols__ targets for all 4.19/vendor labels referenced by dtbo[0]
-	 * inside a non-bus sink node so Linux ignores them (keeping real /reserved-memory
-	 * and disabled mmc0/mmc1 untouched).
-	 */
 	/* Stock LK leds_init() looks up /odm/led@0..6; omit simple-bus so Linux does not probe vendor children. */
 	odm: odm { };
 
+	/*
+	 * Stock LK asserts ufdt_apply_overlay() on the on-device dtbo[0] partition.
+	 * Provide __symbols__ targets for all 4.19/vendor labels referenced by dtbo[0]
+	 * inside a non-bus sink node so Linux ignores them.
+	 */
 	lk-dtbo-sink {
 		reserved_memory: reserved-memory-sink { };
 		regulator_vibrator: regulator-vibrator { };
@@ -166,21 +174,7 @@
 	status = "disabled";
 };
 
-/* Stage 1 isolation: disable non-essential SoC blocks until USB + FB are up. */
-/* Disabling mmsys makes mtk-power-controller fail DISP clk lookup and tear down DPY (DRAM). */
-&spm {
-	status = "disabled";
-};
-
 &dvfsrc {
-	status = "disabled";
-};
-
-&iommu {
-	status = "disabled";
-};
-
-&gce {
 	status = "disabled";
 };
 
@@ -189,70 +183,6 @@
 };
 
 &thermal {
-	status = "disabled";
-};
-
-&mmsys {
-	status = "disabled";
-};
-
-&disp_mutex {
-	status = "disabled";
-};
-
-&smi_common {
-	status = "disabled";
-};
-
-&smi_larb0 {
-	status = "disabled";
-};
-
-&smi_larb1 {
-	status = "disabled";
-};
-
-&smi_larb2 {
-	status = "disabled";
-};
-
-&smi_larb3 {
-	status = "disabled";
-};
-
-&ovl0 {
-	status = "disabled";
-};
-
-&ovl_2l0 {
-	status = "disabled";
-};
-
-&rdma0 {
-	status = "disabled";
-};
-
-&wdma0 {
-	status = "disabled";
-};
-
-&color0 {
-	status = "disabled";
-};
-
-&ccorr0 {
-	status = "disabled";
-};
-
-&aal0 {
-	status = "disabled";
-};
-
-&gamma0 {
-	status = "disabled";
-};
-
-&dither0 {
 	status = "disabled";
 };
 
@@ -313,20 +243,73 @@
 	regulator-max-microvolt = <1200000>;
 };
 
-/*
- * Stage 1: lock USB2 in peripheral mode so MUSB + NCM/ACM gadget comes up
- * immediately without waiting for Type-C TCPC bring-up.
- */
-&u2phy {
-	status = "okay";
-};
-
-
 &i2c5 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&x606f_i2c5_pins>;
 	clock-frequency = <400000>;
 	mediatek,use-open-drain;
+	status = "okay";
+
+	sgm37604a: backlight@36 {
+		compatible = "sgmicro,sgm37604a";
+		reg = <0x36>;
+		enable-gpios = <&pio 154 GPIO_ACTIVE_HIGH>;
+		default-brightness-level = <3072>;
+	};
+
+	tps65132@3e {
+		compatible = "ti,tps65132";
+		reg = <0x3e>;
+
+		reg_lcd_avdd: outp {
+			regulator-name = "lcd-avdd";
+			regulator-min-microvolt = <6000000>;
+			regulator-max-microvolt = <6000000>;
+			regulator-boot-on;
+			enable-gpios = <&pio 167 GPIO_ACTIVE_HIGH>;
+		};
+
+		reg_lcd_avee: outn {
+			regulator-name = "lcd-avee";
+			regulator-min-microvolt = <6000000>;
+			regulator-max-microvolt = <6000000>;
+			regulator-boot-on;
+			enable-gpios = <&pio 168 GPIO_ACTIVE_HIGH>;
+		};
+	};
+};
+
+&dsi_phy {
+	status = "okay";
+};
+
+&dsi {
+	status = "okay";
+
+	port {
+		dsi_out: endpoint {
+			remote-endpoint = <&panel_in>;
+		};
+	};
+
+	panel@0 {
+		compatible = "lenovo,tb-x606f-hx83102p", "himax,hx83102";
+		reg = <0>;
+		enable-gpios = <&pio 45 GPIO_ACTIVE_HIGH>;
+		pp1800-supply = <&reg_lcm_1v8>;
+		avdd-supply = <&reg_lcd_avdd>;
+		avee-supply = <&reg_lcd_avee>;
+		backlight = <&sgm37604a>;
+
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&dsi_out>;
+			};
+		};
+	};
+};
+
+&u2phy {
 	status = "okay";
 };
 
@@ -338,7 +321,7 @@
 	status = "okay";
 };
 
-/* Stage 1 safety: keep internal eMMC and SD card disabled until RAM-only SSH works. */
+/* Stage 2: keep internal eMMC and SD card disabled until display is verified. */
 &mmc0 {
 	status = "disabled";
 };

@@ -304,6 +304,13 @@ config BACKLIGHT_MAX8925
 	  If you have a LCD backlight connected to the WLED output of MAX8925
 	  WLED output, say Y here to enable this driver.
 
+config BACKLIGHT_SGM37604A
+	tristate "SG Micro SGM37604A I2C Backlight Driver"
+	depends on I2C
+	help
+	  Say Y to enable the backlight driver for the SG Micro SGM37604A
+	  4-channel I2C WLED backlight controller.
+
 config BACKLIGHT_MT6370
 	tristate "MediaTek MT6370 Backlight Driver"
 	depends on MFD_MT6370
