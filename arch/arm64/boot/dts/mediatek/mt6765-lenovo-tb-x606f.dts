@@ -60,6 +60,37 @@
 			console-size = <0x40000>;
 			pmsg-size = <0x10000>;
 		};
+
+		consys_mem: consys-reserve-memory {
+			compatible = "mediatek,consys-reserve-memory";
+			no-map;
+			size = <0 0x400000>;
+			alignment = <0 0x1000000>;
+			alloc-ranges = <0 0x40000000 0 0x80000000>;
+		};
+
+		wifi_mem: wifi-reserve-memory {
+			compatible = "shared-dma-pool";
+			no-map;
+			size = <0 0x300000>;
+			alignment = <0 0x1000000>;
+			alloc-ranges = <0 0x40000000 0 0x80000000>;
+		};
+	};
+
+	sound {
+		compatible = "mediatek,mt6765-mt6357-sound";
+		model = "lenovo-tb-x606f";
+		mediatek,platform = <&afe>;
+		mediatek,speaker-enable-gpios = <&pio 151 GPIO_ACTIVE_HIGH>,
+						<&pio 153 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default", "aud_mosi_off", "aud_mosi_on",
+				"aud_miso_off", "aud_miso_on";
+		pinctrl-0 = <&x606f_spk_amp_pins>;
+		pinctrl-1 = <&x606f_aud_mosi_off_pins>;
+		pinctrl-2 = <&x606f_aud_mosi_on_pins>;
+		pinctrl-3 = <&x606f_aud_miso_off_pins>;
+		pinctrl-4 = <&x606f_aud_miso_on_pins>;
 	};
 
 	reg_lcm_1v8: regulator-lcm-1v8 {
@@ -390,6 +421,65 @@
 	};
 };
 
+/*
+ * Connectivity (CONSYS Wi-Fi/BT/GPS). The Linux node uses label x606f_consys
+ * because lk-dtbo-sink holds the legacy "consys" label targeted by dtbo[0].
+ */
+&{/soc} {
+	btif: serial@1100c000 {
+		compatible = "mediatek,btif";
+		reg = <0 0x1100c000 0 0x1000>,
+		      <0 0x11000880 0 0x80>,
+		      <0 0x11000900 0 0x80>;
+		interrupts = <GIC_SPI 112 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_SPI 132 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_SPI 133 IRQ_TYPE_LEVEL_LOW>;
+		clocks = <&infracfg CLK_IFR_BTIF>,
+			 <&infracfg CLK_IFR_AP_DMA>;
+		clock-names = "btifc", "apdmac";
+	};
+
+	x606f_consys: consys@18002000 {
+		compatible = "mediatek,mt6765-consys";
+		reg = <0 0x18002000 0 0x1000>,
+		      <0 0x10007000 0 0x100>,
+		      <0 0x10001000 0 0x1000>,
+		      <0 0x10006000 0 0x1000>,
+		      <0 0x18007000 0 0x1000>,
+		      <0 0x180b1000 0 0x1000>,
+		      <0 0x180a3000 0 0x1000>,
+		      <0 0x180a5000 0 0x800>,
+		      <0 0x180c1000 0 0x1000>,
+		      <0 0x18004000 0 0x1000>,
+		      <0 0 0 0>,
+		      <0 0x1020e000 0 0x1000>,
+		      <0 0x1020e000 0 0x1000>;
+		interrupts = <GIC_SPI 267 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_SPI 269 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_SPI 270 IRQ_TYPE_EDGE_RISING>;
+		power-domains = <&spm MT6765_POWER_DOMAIN_CONN>;
+		memory-region = <&consys_mem>;
+		pinctrl-names = "default", "gps_lna_state_init",
+				"gps_lna_state_oh", "gps_lna_state_ol";
+		pinctrl-0 = <&x606f_gps_lna_init_pins>;
+		pinctrl-1 = <&x606f_gps_lna_init_pins>;
+		pinctrl-2 = <&x606f_gps_lna_high_pins>;
+		pinctrl-3 = <&x606f_gps_lna_low_pins>;
+		pmic = <&mt6357_pmic>;
+		vcn18-supply = <&mt6357_vcn18_reg>;
+		vcn28-supply = <&mt6357_vcn28_reg>;
+		vcn33_bt-supply = <&mt6357_vcn33_bt_reg>;
+		vcn33_wifi-supply = <&mt6357_vcn33_wifi_reg>;
+	};
+
+	wifi: wifi@18000000 {
+		compatible = "mediatek,wifi";
+		reg = <0 0x18000000 0 0x100000>;
+		interrupts = <GIC_SPI 268 IRQ_TYPE_LEVEL_LOW>;
+		memory-region = <&wifi_mem>;
+	};
+};
+
 &cpu0 {
 	clocks = <&mcucfg CLK_MCU_MP0_SEL>,
 		 <&topckgen CLK_TOP_ARMPLL_DIVIDER_PLL1_EN>;
@@ -490,6 +580,10 @@
 };
 
 &pwrap {
+	status = "okay";
+};
+
+&afe {
 	status = "okay";
 };
 
@@ -775,6 +869,70 @@
 			pinmux = <PINMUX_GPIO48__FUNC_SCL5>,
 				 <PINMUX_GPIO49__FUNC_SDA5>;
 			bias-pull-up;
+		};
+	};
+	x606f_aud_mosi_on_pins: aud-mosi-on-pins {
+		pins-aud {
+			pinmux = <PINMUX_GPIO136__FUNC_AUD_CLK_MOSI>,
+				 <PINMUX_GPIO137__FUNC_AUD_SYNC_MOSI>,
+				 <PINMUX_GPIO138__FUNC_AUD_DAT_MOSI0>,
+				 <PINMUX_GPIO139__FUNC_AUD_DAT_MOSI1>;
+		};
+	};
+	x606f_aud_mosi_off_pins: aud-mosi-off-pins {
+		pins-clk {
+			pinmux = <PINMUX_GPIO136__FUNC_GPIO136>;
+		};
+		pins-dat {
+			pinmux = <PINMUX_GPIO138__FUNC_GPIO138>,
+				 <PINMUX_GPIO139__FUNC_GPIO139>;
+			input-enable;
+			bias-disable;
+		};
+	};
+	x606f_aud_miso_on_pins: aud-miso-on-pins {
+		pins-aud {
+			pinmux = <PINMUX_GPIO140__FUNC_AUD_CLK_MISO>,
+				 <PINMUX_GPIO141__FUNC_AUD_SYNC_MISO>,
+				 <PINMUX_GPIO142__FUNC_AUD_DAT_MISO0>,
+				 <PINMUX_GPIO143__FUNC_AUD_DAT_MISO1>;
+		};
+	};
+	x606f_aud_miso_off_pins: aud-miso-off-pins {
+		pins-clk {
+			pinmux = <PINMUX_GPIO140__FUNC_GPIO140>;
+		};
+		pins-dat {
+			pinmux = <PINMUX_GPIO142__FUNC_GPIO142>,
+				 <PINMUX_GPIO143__FUNC_GPIO143>;
+			input-enable;
+			bias-disable;
+		};
+	};
+	x606f_spk_amp_pins: spk-amp-pins {
+		pins-amp {
+			pinmux = <PINMUX_GPIO151__FUNC_GPIO151>,
+				 <PINMUX_GPIO153__FUNC_GPIO153>;
+			output-low;
+		};
+	};
+	x606f_gps_lna_init_pins: gps-lna-init-pins {
+		pins-lna {
+			pinmux = <PINMUX_GPIO91__FUNC_GPIO91>;
+			bias-disable;
+			output-low;
+		};
+	};
+	x606f_gps_lna_high_pins: gps-lna-high-pins {
+		pins-lna {
+			pinmux = <PINMUX_GPIO91__FUNC_GPIO91>;
+			output-high;
+		};
+	};
+	x606f_gps_lna_low_pins: gps-lna-low-pins {
+		pins-lna {
+			pinmux = <PINMUX_GPIO91__FUNC_GPIO91>;
+			output-low;
 		};
 	};
 };
