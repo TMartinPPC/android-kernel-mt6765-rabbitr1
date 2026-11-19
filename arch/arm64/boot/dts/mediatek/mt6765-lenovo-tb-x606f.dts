@@ -842,7 +842,8 @@
 	sd-uhs-sdr50;
 	sd-uhs-sdr104;
 	sd-uhs-ddr50;
-	cd-gpios = <&pio 1 GPIO_ACTIVE_HIGH>;
+	/* GPIO 1 is externally pulled high when the microSD slot is empty. */
+	cd-gpios = <&pio 1 GPIO_ACTIVE_LOW>;
 	no-mmc;
 	no-sdio;
 	vmmc-supply = <&mt6357_vmch_reg>;
