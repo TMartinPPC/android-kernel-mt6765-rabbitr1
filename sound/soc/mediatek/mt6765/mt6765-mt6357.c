@@ -5,6 +5,8 @@
 //
 // Based on the MT8365 EVK machine driver by Nicolas Belin.
 
+#include <linux/delay.h>
+#include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/pinctrl/consumer.h>
@@ -32,7 +34,40 @@ static const char * const mt6765_mt6357_pin_str[PIN_STATE_MAX] = {
 struct mt6765_mt6357_priv {
 	struct pinctrl *pinctrl;
 	struct pinctrl_state *pin_states[PIN_STATE_MAX];
+	struct gpio_descs *spk_en_gpios;
 };
+
+static int mt6765_mt6357_spk_event(struct snd_soc_dapm_widget *w,
+				   struct snd_kcontrol *kcontrol, int event)
+{
+	struct mt6765_mt6357_priv *priv = snd_soc_card_get_drvdata(snd_soc_dapm_to_card(w->dapm));
+	unsigned int i, pulse;
+
+	if (!priv->spk_en_gpios)
+		return 0;
+
+	if (SND_SOC_DAPM_EVENT_ON(event)) {
+		for (i = 0; i < priv->spk_en_gpios->ndescs; i++)
+			gpiod_set_value_cansleep(priv->spk_en_gpios->desc[i], 0);
+		usleep_range(1000, 2000);
+
+		for (pulse = 0; pulse < 3; pulse++) {
+			for (i = 0; i < priv->spk_en_gpios->ndescs; i++)
+				gpiod_set_value_cansleep(priv->spk_en_gpios->desc[i], 0);
+			udelay(1);
+			for (i = 0; i < priv->spk_en_gpios->ndescs; i++)
+				gpiod_set_value_cansleep(priv->spk_en_gpios->desc[i], 1);
+			udelay(1);
+		}
+		usleep_range(5000, 10000);
+	} else {
+		for (i = 0; i < priv->spk_en_gpios->ndescs; i++)
+			gpiod_set_value_cansleep(priv->spk_en_gpios->desc[i], 0);
+		udelay(500);
+	}
+
+	return 0;
+}
 
 static int mt6765_mt6357_select_pins(struct snd_soc_pcm_runtime *rtd,
 				     int stream, bool on)
@@ -130,7 +165,7 @@ static struct snd_soc_dai_link mt6765_mt6357_dai_links[] = {
 };
 
 static const struct snd_soc_dapm_widget mt6765_mt6357_widgets[] = {
-	SND_SOC_DAPM_SPK("Speaker", NULL),
+	SND_SOC_DAPM_SPK("Speaker", mt6765_mt6357_spk_event),
 	SND_SOC_DAPM_HP("Headphone", NULL),
 	SND_SOC_DAPM_MIC("Main Mic", NULL),
 };
@@ -259,6 +294,15 @@ static int mt6765_mt6357_dev_probe(struct platform_device *pdev)
 		conf->name_prefix = "Speaker Amp";
 		card->codec_conf = conf;
 		card->num_configs = 1;
+	}
+
+	priv->spk_en_gpios = devm_gpiod_get_array_optional(dev,
+							   "mediatek,speaker-enable",
+							   GPIOD_OUT_LOW);
+	if (IS_ERR(priv->spk_en_gpios)) {
+		ret = dev_err_probe(dev, PTR_ERR(priv->spk_en_gpios),
+				    "failed to get speaker enable gpios\n");
+		goto err_put_nodes;
 	}
 
 	mt6765_mt6357_get_pins(dev, priv);
