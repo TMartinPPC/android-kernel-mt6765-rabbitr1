@@ -669,6 +669,95 @@ int mtk_dvfsrc_query_info(const struct device *dev, u32 cmd, int *data)
 }
 EXPORT_SYMBOL(mtk_dvfsrc_query_info);
 
+static const struct {
+	u32 offset;
+	u32 val;
+} dvfsrc_mt6765_legacy_settings[] = {
+	{0xC, 0x00240009}, {0x14, 0x09000000},
+	{0x18, 0x003E362C}, {0x24, 0x00000033},
+	{0x28, 0x0000004C}, {0x3C, 0x00000007},
+	{0x40, 0x00000038}, {0x44, 0x000080C0},
+	{0x78, 0x000080C0}, {0x48, 0x000C0000},
+	{0x50, 0x00000036}, {0x84, 0x20000000},
+	{0xD8, 0x00000014}, {0x9C, 0x00000003},
+	{0xE0, 0x00010000}, {0xE4, 0x00020101},
+	{0xE8, 0x01020012}, {0xEC, 0x02120112},
+	{0xF0, 0x00230013}, {0xF4, 0x01230113},
+	{0xF8, 0x02230213}, {0xFC, 0x03230323},
+	{0x300, 0x20000000}, {0x604, 0x0000000C},
+	{0x180, 0x0000407F}, {0x0, 0x0000407B},
+	{0x0, 0x0000017B}, {0x300, 0x00000000},
+};
+
+static int mt6765_dvfsrc_legacy_init(struct mtk_dvfsrc *dvfsrc)
+{
+	static const u32 pwrap_cmd[] = { 4, 3, 2, 0 };
+	struct arm_smccc_res ares;
+	struct device_node *chosen;
+	const u32 *prop;
+	int len;
+	u32 count, ptpod0, ptpod10, w132;
+	u32 uv[4], vb;
+	size_t i;
+
+	if (!of_device_is_compatible(dvfsrc->dev->of_node, "mediatek,mt6765-dvfsrc"))
+		return -EINVAL;
+
+	chosen = of_find_node_by_path("/chosen");
+	if (!chosen)
+		return dev_err_probe(dvfsrc->dev, -ENODEV, "no /chosen node for devinfo\n");
+	prop = of_get_property(chosen, "atag,devinfo", &len);
+	of_node_put(chosen);
+	if (!prop || len < sizeof(u32))
+		return dev_err_probe(dvfsrc->dev, -ENODEV, "no atag,devinfo for legacy vcorefs\n");
+
+	count = prop[0];
+	if (count <= 132 || (len - sizeof(u32)) / sizeof(u32) <= 132)
+		return dev_err_probe(dvfsrc->dev, -EINVAL, "short atag,devinfo (%u words)\n", count);
+
+	ptpod0 = prop[1 + 50];
+	ptpod10 = prop[1 + 60];
+	w132 = prop[1 + 132];
+
+	vb = ptpod0 && ptpod0 != 0xff00 && !(ptpod10 & GENMASK(9, 4));
+	uv[0] = 650000 + vb * 25000;
+	vb = min((ptpod10 >> 10) & 0x3U, 2U);
+	uv[1] = max(700000U - vb * 25000U, uv[0]);
+	uv[2] = 700000;
+	uv[3] = 800000;
+	if (w132 & BIT(0)) {
+		uv[0] = uv[2];
+		uv[1] = uv[2];
+	}
+
+	for (i = 0; i < ARRAY_SIZE(uv); i++) {
+		arm_smccc_smc(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, 3, pwrap_cmd[i],
+			      DIV_ROUND_UP(uv[i] - 518750, 6250), 0, 0, 0, 0, &ares);
+		if (ares.a0)
+			return dev_err_probe(dvfsrc->dev, -EIO,
+					     "SPM VCOREFS pwrap cmd %zu failed: %lu\n",
+					     i, ares.a0);
+	}
+
+	for (i = 0; i < ARRAY_SIZE(dvfsrc_mt6765_legacy_settings); i++)
+		writel(dvfsrc_mt6765_legacy_settings[i].val,
+		       dvfsrc->regs + dvfsrc_mt6765_legacy_settings[i].offset);
+
+	arm_smccc_smc(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, 0, 0, 0, 0, 0, 0, 0, &ares);
+	if (ares.a0)
+		return dev_err_probe(dvfsrc->dev, -EIO,
+				     "SPM VCOREFS init failed: %lu\n", ares.a0);
+
+	arm_smccc_smc(MTK_SIP_KERNEL_SPM_VCOREFS_ARGS, 1, BIT(10), 0, 0, 0, 0, 0, &ares);
+	if (ares.a0)
+		return dev_err_probe(dvfsrc->dev, -EIO,
+				     "SPM VCOREFS start failed: %lu\n", ares.a0);
+
+	dev_info(dvfsrc->dev, "legacy vcorefs initialized (vopp %u/%u/%u/%u uV)\n",
+		 uv[0], uv[1], uv[2], uv[3]);
+	return 0;
+}
+
 static int mtk_dvfsrc_probe(struct platform_device *pdev)
 {
 	struct arm_smccc_res ares;
@@ -691,36 +780,46 @@ static int mtk_dvfsrc_probe(struct platform_device *pdev)
 		return dev_err_probe(&pdev->dev, PTR_ERR(dvfsrc->clk),
 				     "Couldn't get and enable DVFSRC clock\n");
 
-	arm_smccc_smc(MTK_SIP_DVFSRC_VCOREFS_CONTROL, MTK_SIP_DVFSRC_INIT,
-		      0, 0, 0, 0, 0, 0, &ares);
-	if (ares.a0)
-		return dev_err_probe(&pdev->dev, -EINVAL, "DVFSRC init failed: %lu\n", ares.a0);
-
-	dvfsrc->dram_type = ares.a1;
-	dev_dbg(&pdev->dev, "DRAM Type: %d\n", dvfsrc->dram_type);
-
-	/* Newer versions of the DVFSRC MCU have pre-programmed gear tables */
-	if (dvfsrc->dvd->get_hw_opps) {
-		ret = dvfsrc->dvd->get_hw_opps(dvfsrc);
+	if (of_property_read_bool(pdev->dev.of_node, "mediatek,legacy-vcorefs")) {
+		ret = mt6765_dvfsrc_legacy_init(dvfsrc);
 		if (ret)
 			return ret;
+
+		dvfsrc->dram_type = 1;
+		dvfsrc->curr_opps = &dvfsrc->dvd->opps_desc[0];
+		platform_set_drvdata(pdev, dvfsrc);
 	} else {
-		/* A single table serves every DRAM type the firmware reports */
-		u32 desc = dvfsrc->dvd->num_opps_desc == 1 ? 0 : dvfsrc->dram_type;
+		arm_smccc_smc(MTK_SIP_DVFSRC_VCOREFS_CONTROL, MTK_SIP_DVFSRC_INIT,
+			      0, 0, 0, 0, 0, 0, &ares);
+		if (ares.a0)
+			return dev_err_probe(&pdev->dev, -EINVAL, "DVFSRC init failed: %lu\n", ares.a0);
 
-		if (desc >= dvfsrc->dvd->num_opps_desc)
-			return dev_err_probe(&pdev->dev, -EINVAL,
-					     "No OPP table for DRAM type %d\n",
-					     dvfsrc->dram_type);
-		dvfsrc->curr_opps = &dvfsrc->dvd->opps_desc[desc];
+		dvfsrc->dram_type = ares.a1;
+		dev_dbg(&pdev->dev, "DRAM Type: %d\n", dvfsrc->dram_type);
+
+		/* Newer versions of the DVFSRC MCU have pre-programmed gear tables */
+		if (dvfsrc->dvd->get_hw_opps) {
+			ret = dvfsrc->dvd->get_hw_opps(dvfsrc);
+			if (ret)
+				return ret;
+		} else {
+			/* A single table serves every DRAM type the firmware reports */
+			u32 desc = dvfsrc->dvd->num_opps_desc == 1 ? 0 : dvfsrc->dram_type;
+
+			if (desc >= dvfsrc->dvd->num_opps_desc)
+				return dev_err_probe(&pdev->dev, -EINVAL,
+						     "No OPP table for DRAM type %d\n",
+						     dvfsrc->dram_type);
+			dvfsrc->curr_opps = &dvfsrc->dvd->opps_desc[desc];
+		}
+		platform_set_drvdata(pdev, dvfsrc);
+
+		/* Everything is set up - make it run! */
+		arm_smccc_smc(MTK_SIP_DVFSRC_VCOREFS_CONTROL, MTK_SIP_DVFSRC_START,
+			      0, 0, 0, 0, 0, 0, &ares);
+		if (ares.a0 & BIT(0))
+			return dev_err_probe(&pdev->dev, -EINVAL, "Cannot start DVFSRC: %lu\n", ares.a0);
 	}
-	platform_set_drvdata(pdev, dvfsrc);
-
-	/* Everything is set up - make it run! */
-	arm_smccc_smc(MTK_SIP_DVFSRC_VCOREFS_CONTROL, MTK_SIP_DVFSRC_START,
-		      0, 0, 0, 0, 0, 0, &ares);
-	if (ares.a0 & BIT(0))
-		return dev_err_probe(&pdev->dev, -EINVAL, "Cannot start DVFSRC: %lu\n", ares.a0);
 
 	/*
 	 * Children may vote and wait for the level they asked for while they

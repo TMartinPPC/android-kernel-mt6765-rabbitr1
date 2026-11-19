@@ -83,11 +83,28 @@
 		alert-celsius = <0 50>;
 	};
 
-	/delete-node/ rng;
-	/delete-node/ thermal-zones;
-
 	cpus {
 		/delete-node/ idle-states;
+	};
+
+	dram_opp: opp-table-dram {
+		compatible = "operating-points-v2";
+
+		dram_opp_low: opp-1534000000 {
+			opp-hz = /bits/ 64 <1534000000>;
+			opp-level = <0>;
+			opp-suspend;
+		};
+
+		dram_opp_mid: opp-2392000000 {
+			opp-hz = /bits/ 64 <2392000000>;
+			opp-level = <3>;
+		};
+
+		dram_opp_high: opp-3200000000 {
+			opp-hz = /bits/ 64 <3200000000>;
+			opp-level = <5>;
+		};
 	};
 
 	/* Stock LK checks for mediatek,scp and scp_sramSize before booting. */
@@ -187,15 +204,7 @@
 	status = "disabled";
 };
 
-&dvfsrc {
-	status = "disabled";
-};
-
 &mcdi {
-	status = "disabled";
-};
-
-&thermal {
 	status = "disabled";
 };
 
@@ -367,6 +376,26 @@
 		input-current-limit-microamp = <2000000>;
 		input-voltage-limit-microvolt = <4500000>;
 	};
+};
+
+&spm_sleep {
+	mediatek,spmfw-idx = <1>;
+	status = "okay";
+};
+
+&dvfsrc {
+	mediatek,legacy-vcorefs;
+
+	dram {
+		compatible = "mediatek,mt6765-dvfsrc-dram";
+		operating-points-v2 = <&dram_opp>;
+	};
+};
+
+&gpu {
+	vcore-supply = <&mt6357_vcore_reg>;
+	dvfsrc-vcore-supply = <&dvfsrc_vcore>;
+	status = "okay";
 };
 
 &dsi_phy {
