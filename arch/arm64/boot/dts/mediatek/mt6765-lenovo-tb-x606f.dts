@@ -210,10 +210,7 @@
 		mediatek,long-press-mode = <1>;
 		power-off-time-sec = <0>;
 
-		key-home {
-			linux,keycodes = <KEY_VOLUMEUP>;
-			wakeup-source;
-		};
+		/delete-node/ key-home;
 	};
 };
 
@@ -241,6 +238,38 @@
 &mt6357_vsram_proc_reg {
 	regulator-min-microvolt = <900000>;
 	regulator-max-microvolt = <1200000>;
+};
+
+&keypad {
+	keypad,num-rows = <1>;
+	keypad,num-columns = <2>;
+	linux,keymap = <MATRIX_KEY(0, 0, KEY_VOLUMEUP)
+			MATRIX_KEY(0, 1, KEY_VOLUMEDOWN)>;
+	debounce-delay-ms = <32>;
+	wakeup-source;
+	status = "okay";
+};
+
+&i2c0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&x606f_i2c0_pins>;
+	clock-frequency = <400000>;
+	mediatek,use-push-pull;
+	status = "okay";
+
+	touchscreen@48 {
+		compatible = "himax,hx83102e";
+		reg = <0x48>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&x606f_touch_pins>;
+		interrupt-parent = <&pio>;
+		interrupts = <10 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&pio 172 GPIO_ACTIVE_LOW>;
+		vdd-supply = <&mt6357_vldo28_reg>;
+		panel = <&dsi_panel>;
+		touchscreen-size-x = <1200>;
+		touchscreen-size-y = <1920>;
+	};
 };
 
 &i2c5 {
@@ -292,7 +321,7 @@
 		};
 	};
 
-	panel@0 {
+	dsi_panel: panel@0 {
 		compatible = "lenovo,tb-x606f-hx83102p", "himax,hx83102";
 		reg = <0>;
 		enable-gpios = <&pio 45 GPIO_ACTIVE_HIGH>;
@@ -335,6 +364,38 @@
 		pins {
 			pinmux = <PINMUX_GPIO95__FUNC_URXD0>,
 				 <PINMUX_GPIO96__FUNC_UTXD0>;
+		};
+	};
+	x606f_i2c0_pins: i2c0-pins {
+		pins {
+			pinmux = <PINMUX_GPIO82__FUNC_SDA0>,
+				 <PINMUX_GPIO83__FUNC_SCL0>;
+			input-enable;
+			bias-pull-up;
+		};
+	};
+	x606f_touch_pins: touch-pins {
+		pins-irq {
+			pinmux = <PINMUX_GPIO10__FUNC_GPIO10>;
+			input-enable;
+			bias-disable;
+		};
+		pins-reset {
+			pinmux = <PINMUX_GPIO172__FUNC_GPIO172>;
+		};
+	};
+	kpd_pins_default: kpdgpiodefault {
+		pins-rows {
+			pinmux = <PINMUX_GPIO92__FUNC_KPROW0>;
+			output-low;
+			bias-disable;
+		};
+		pins-cols {
+			pinmux = <PINMUX_GPIO93__FUNC_KPCOL0>,
+				 <PINMUX_GPIO94__FUNC_KPCOL1>;
+			input-enable;
+			input-schmitt-enable;
+			bias-pull-up = <MTK_PUPD_SET_R1R0_10>;
 		};
 	};
 	x606f_i2c5_pins: i2c5-pins {

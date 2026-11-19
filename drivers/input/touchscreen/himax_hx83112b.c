@@ -12,6 +12,7 @@
  * Copyright (C) 2017 Himax Corporation.
  */
 
+#include <drm/drm_panel.h>
 #include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/gpio/consumer.h>
@@ -22,6 +23,7 @@
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/regmap.h>
+#include <linux/regulator/consumer.h>
 
 #define HIMAX_MAX_POINTS		10
 
@@ -36,7 +38,12 @@
 #define HIMAX_AHB_CMD_INCR4			0x10
 #define HIMAX_AHB_CMD_CONTI			0x31
 
+#define HIMAX_REG_ADDR_FW_MODE_STATUS		0x10007088
+#define HIMAX_REG_ADDR_FLASH_RELOAD2		0x100072c0
+#define HIMAX_REG_ADDR_FLASH_RELOAD		0x10007f00
 #define HIMAX_REG_ADDR_ICID			0x900000d0
+
+#define HIMAX_FW_DATA_IDLE_DIS_PWD		0x17
 
 #define HX83100A_REG_FW_EVENT_STACK		0x90060000
 
@@ -61,7 +68,9 @@ static_assert(sizeof(struct himax_event) == 56);
 struct himax_ts_data;
 struct himax_chip {
 	u32 id;
+	unsigned int post_reset_ms;
 	int (*check_id)(struct himax_ts_data *ts);
+	int (*init)(struct himax_ts_data *ts);
 	int (*read_events)(struct himax_ts_data *ts, struct himax_event *event,
 			   size_t length);
 };
@@ -72,7 +81,11 @@ struct himax_ts_data {
 	struct input_dev *input_dev;
 	struct i2c_client *client;
 	struct regmap *regmap;
+	struct regulator *vdd;
+	struct drm_panel_follower panel_follower;
 	struct touchscreen_properties props;
+	bool is_panel_follower;
+	bool enabled;
 };
 
 static const struct regmap_config himax_regmap_config = {
@@ -81,17 +94,29 @@ static const struct regmap_config himax_regmap_config = {
 	.val_format_endian = REGMAP_ENDIAN_LITTLE,
 };
 
+static int himax_write_reg8(struct himax_ts_data *ts, u8 reg, u8 val)
+{
+	u8 buf[2] = { reg, val };
+	int ret;
+
+	ret = i2c_master_send(ts->client, buf, sizeof(buf));
+	if (ret < 0)
+		return ret;
+
+	return ret == sizeof(buf) ? 0 : -EIO;
+}
+
 static int himax_bus_enable_burst(struct himax_ts_data *ts)
 {
 	int error;
 
-	error = regmap_write(ts->regmap, HIMAX_AHB_ADDR_CONTI,
-			     HIMAX_AHB_CMD_CONTI);
+	error = himax_write_reg8(ts, HIMAX_AHB_ADDR_CONTI,
+				 HIMAX_AHB_CMD_CONTI);
 	if (error)
 		return error;
 
-	error = regmap_write(ts->regmap, HIMAX_AHB_ADDR_INCR4,
-			     HIMAX_AHB_CMD_INCR4);
+	error = himax_write_reg8(ts, HIMAX_AHB_ADDR_INCR4,
+				 HIMAX_AHB_CMD_INCR4);
 	if (error)
 		return error;
 
@@ -113,8 +138,8 @@ static int himax_bus_read(struct himax_ts_data *ts, u32 address, void *dst,
 	if (error)
 		return error;
 
-	error = regmap_write(ts->regmap, HIMAX_AHB_ADDR_ACCESS_DIRECTION,
-			     HIMAX_AHB_CMD_ACCESS_DIRECTION_READ);
+	error = himax_write_reg8(ts, HIMAX_AHB_ADDR_ACCESS_DIRECTION,
+				 HIMAX_AHB_CMD_ACCESS_DIRECTION_READ);
 	if (error)
 		return error;
 
@@ -130,6 +155,17 @@ static int himax_bus_read(struct himax_ts_data *ts, u32 address, void *dst,
 	return 0;
 }
 
+static int himax_bus_write(struct himax_ts_data *ts, u32 address, u32 value)
+{
+	__le32 data[2] = {
+		cpu_to_le32(address),
+		cpu_to_le32(value),
+	};
+
+	return regmap_raw_write(ts->regmap, HIMAX_AHB_ADDR_BYTE_0, data,
+				sizeof(data));
+}
+
 static void himax_reset(struct himax_ts_data *ts)
 {
 	gpiod_set_value_cansleep(ts->gpiod_rst, 1);
@@ -138,11 +174,10 @@ static void himax_reset(struct himax_ts_data *ts)
 	msleep(20);
 	gpiod_set_value_cansleep(ts->gpiod_rst, 0);
 
-	/*
-	 * The downstream driver doesn't contain this delay but is seems safer
-	 * to include it. The range is just a guess that seems to work well.
-	 */
-	usleep_range(1000, 1100);
+	if (ts->chip->post_reset_ms)
+		msleep(ts->chip->post_reset_ms);
+	else
+		usleep_range(1000, 1100);
 }
 
 static int himax_read_product_id(struct himax_ts_data *ts, u32 *product_id)
@@ -167,7 +202,7 @@ static int himax_check_product_id(struct himax_ts_data *ts)
 	if (error)
 		return error;
 
-	dev_dbg(&ts->client->dev, "Product id: %x\n", product_id);
+	dev_info_once(&ts->client->dev, "Product id: %x\n", product_id);
 
 	if (product_id == ts->chip->id)
 		return 0;
@@ -175,6 +210,63 @@ static int himax_check_product_id(struct himax_ts_data *ts)
 	dev_err(&ts->client->dev, "Unknown product id: %x\n",
 		product_id);
 	return -EINVAL;
+}
+
+static int hx83102e_init(struct himax_ts_data *ts)
+{
+	u32 val = 0, reload = 0, reload2 = 0;
+	int error;
+	int i;
+
+	error = himax_bus_enable_burst(ts);
+	if (error)
+		return error;
+
+	for (i = 0; i < 20; i++) {
+		error = himax_bus_read(ts, HIMAX_REG_ADDR_FLASH_RELOAD,
+				       &reload, sizeof(reload));
+		if (error)
+			return error;
+
+		error = himax_bus_read(ts, HIMAX_REG_ADDR_FLASH_RELOAD2,
+				       &reload2, sizeof(reload2));
+		if (error)
+			return error;
+
+		if ((reload & 0xffff) == 0x3aa3 || (reload2 & 0xffff) == 0x72c0)
+			break;
+
+		usleep_range(10000, 11000);
+	}
+	if (i == 20)
+		dev_warn(&ts->client->dev,
+			 "Flash reload timeout (%#010x, %#010x)\n",
+			 reload, reload2);
+
+	/*
+	 * HX83102E firmware drops into an unwakeable idle state after ~5.5s
+	 * when left in default idle-enabled mode; keep idle disabled while
+	 * the panel is enabled.
+	 */
+	for (i = 0; i < 20; i++) {
+		error = himax_bus_read(ts, HIMAX_REG_ADDR_FW_MODE_STATUS,
+				       &val, sizeof(val));
+		if (error)
+			return error;
+
+		if ((val & 0xff) == HIMAX_FW_DATA_IDLE_DIS_PWD)
+			return 0;
+
+		val = (val & ~0xffU) | HIMAX_FW_DATA_IDLE_DIS_PWD;
+		error = himax_bus_write(ts, HIMAX_REG_ADDR_FW_MODE_STATUS, val);
+		if (error)
+			return error;
+
+		usleep_range(10000, 11000);
+	}
+
+	dev_err(&ts->client->dev, "Failed to disable idle mode (%#010x)\n", val);
+	return -ETIMEDOUT;
 }
 
 static int himax_input_register(struct himax_ts_data *ts)
@@ -323,11 +415,93 @@ static irqreturn_t himax_irq_handler(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+static int himax_power_on(struct himax_ts_data *ts)
+{
+	int error;
+
+	error = regulator_enable(ts->vdd);
+	if (error) {
+		dev_err(&ts->client->dev, "Failed to enable vdd: %d\n", error);
+		return error;
+	}
+
+	usleep_range(5000, 6000);
+	himax_reset(ts);
+
+	if (ts->chip->check_id) {
+		error = ts->chip->check_id(ts);
+		if (error)
+			goto err_power_off;
+	}
+
+	if (ts->chip->init) {
+		error = ts->chip->init(ts);
+		if (error)
+			goto err_power_off;
+	}
+
+	return 0;
+
+err_power_off:
+	gpiod_set_value_cansleep(ts->gpiod_rst, 1);
+	regulator_disable(ts->vdd);
+	return error;
+}
+
+static void himax_power_off(struct himax_ts_data *ts)
+{
+	gpiod_set_value_cansleep(ts->gpiod_rst, 1);
+	regulator_disable(ts->vdd);
+}
+
+static void himax_power_off_action(void *data)
+{
+	himax_power_off(data);
+}
+
+static int himax_panel_enabled(struct drm_panel_follower *follower)
+{
+	struct himax_ts_data *ts = container_of(follower, struct himax_ts_data,
+						panel_follower);
+	int error;
+
+	if (ts->enabled)
+		return 0;
+
+	error = himax_power_on(ts);
+	if (error)
+		return error;
+
+	ts->enabled = true;
+	enable_irq(ts->client->irq);
+	return 0;
+}
+
+static int himax_panel_disabling(struct drm_panel_follower *follower)
+{
+	struct himax_ts_data *ts = container_of(follower, struct himax_ts_data,
+						panel_follower);
+
+	if (!ts->enabled)
+		return 0;
+
+	disable_irq(ts->client->irq);
+	himax_power_off(ts);
+	ts->enabled = false;
+	return 0;
+}
+
+static const struct drm_panel_follower_funcs himax_panel_follower_funcs = {
+	.panel_enabled = himax_panel_enabled,
+	.panel_disabling = himax_panel_disabling,
+};
+
 static int himax_probe(struct i2c_client *client)
 {
 	int error;
 	struct device *dev = &client->dev;
 	struct himax_ts_data *ts;
+	unsigned long irq_flags = IRQF_ONESHOT;
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
 		dev_err(dev, "I2C check functionality failed\n");
@@ -341,6 +515,7 @@ static int himax_probe(struct i2c_client *client)
 	i2c_set_clientdata(client, ts);
 	ts->client = client;
 	ts->chip = i2c_get_match_data(client);
+	ts->is_panel_follower = drm_is_panel_follower(dev);
 
 	ts->regmap = devm_regmap_init_i2c(client, &himax_regmap_config);
 	error = PTR_ERR_OR_ZERO(ts->regmap);
@@ -349,6 +524,11 @@ static int himax_probe(struct i2c_client *client)
 		return error;
 	}
 
+	ts->vdd = devm_regulator_get(dev, "vdd");
+	if (IS_ERR(ts->vdd))
+		return dev_err_probe(dev, PTR_ERR(ts->vdd),
+				     "Failed to get vdd regulator\n");
+
 	ts->gpiod_rst = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
 	error = PTR_ERR_OR_ZERO(ts->gpiod_rst);
 	if (error) {
@@ -356,12 +536,16 @@ static int himax_probe(struct i2c_client *client)
 		return error;
 	}
 
-	himax_reset(ts);
-
-	if (ts->chip->check_id) {
-		error = himax_check_product_id(ts);
+	if (!ts->is_panel_follower) {
+		error = himax_power_on(ts);
 		if (error)
 			return error;
+
+		error = devm_add_action_or_reset(dev, himax_power_off_action, ts);
+		if (error)
+			return error;
+	} else {
+		irq_flags |= IRQF_NO_AUTOEN;
 	}
 
 	error = himax_input_register(ts);
@@ -369,10 +553,18 @@ static int himax_probe(struct i2c_client *client)
 		return error;
 
 	error = devm_request_threaded_irq(dev, client->irq, NULL,
-					  himax_irq_handler, IRQF_ONESHOT,
+					  himax_irq_handler, irq_flags,
 					  client->name, ts);
 	if (error)
 		return error;
+
+	if (ts->is_panel_follower) {
+		ts->panel_follower.funcs = &himax_panel_follower_funcs;
+		error = devm_drm_panel_add_follower(dev, &ts->panel_follower);
+		if (error)
+			return dev_err_probe(dev, error,
+					     "Failed to add panel follower\n");
+	}
 
 	return 0;
 }
@@ -381,6 +573,9 @@ static int himax_suspend(struct device *dev)
 {
 	struct himax_ts_data *ts = dev_get_drvdata(dev);
 
+	if (ts->is_panel_follower)
+		return 0;
+
 	disable_irq(ts->client->irq);
 	return 0;
 }
@@ -388,6 +583,9 @@ static int himax_suspend(struct device *dev)
 static int himax_resume(struct device *dev)
 {
 	struct himax_ts_data *ts = dev_get_drvdata(dev);
+
+	if (ts->is_panel_follower)
+		return 0;
 
 	enable_irq(ts->client->irq);
 	return 0;
@@ -399,6 +597,14 @@ static const struct himax_chip hx83100a_chip = {
 	.read_events = hx83100a_read_events,
 };
 
+static const struct himax_chip hx83102e_chip = {
+	.id = 0x83102e,
+	.post_reset_ms = 50,
+	.check_id = himax_check_product_id,
+	.init = hx83102e_init,
+	.read_events = himax_read_events,
+};
+
 static const struct himax_chip hx83112b_chip = {
 	.id = 0x83112b,
 	.check_id = himax_check_product_id,
@@ -407,6 +613,7 @@ static const struct himax_chip hx83112b_chip = {
 
 static const struct i2c_device_id himax_ts_id[] = {
 	{ .name = "hx83100a", .driver_data = (kernel_ulong_t)&hx83100a_chip },
+	{ .name = "hx83102e", .driver_data = (kernel_ulong_t)&hx83102e_chip },
 	{ .name = "hx83112b", .driver_data = (kernel_ulong_t)&hx83112b_chip },
 	{ /* sentinel */ }
 };
@@ -415,6 +622,7 @@ MODULE_DEVICE_TABLE(i2c, himax_ts_id);
 #ifdef CONFIG_OF
 static const struct of_device_id himax_of_match[] = {
 	{ .compatible = "himax,hx83100a", .data = &hx83100a_chip },
+	{ .compatible = "himax,hx83102e", .data = &hx83102e_chip },
 	{ .compatible = "himax,hx83112b", .data = &hx83112b_chip },
 	{ /* sentinel */ }
 };
