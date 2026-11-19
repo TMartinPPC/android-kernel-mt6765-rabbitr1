@@ -10,6 +10,7 @@
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/usb/typec.h>
+#include <linux/workqueue.h>
 
 #define WUSB3801_REG_DEVICE_ID		0x01
 #define WUSB3801_REG_CTRL0		0x02
@@ -93,7 +94,9 @@ struct wusb3801 {
 	unsigned int		partner_type;
 	enum typec_port_type	port_type;
 	enum typec_pwr_opmode	pwr_opmode;
+	struct delayed_work	poll_work;
 	bool			vbus_on;
+	bool			has_irq;
 };
 
 static enum typec_role wusb3801_get_default_role(struct wusb3801 *wusb3801)
@@ -214,7 +217,8 @@ static int wusb3801_hw_init(struct wusb3801 *wusb3801)
 	return regmap_write(wusb3801->regmap, WUSB3801_REG_CTRL0,
 			    wusb3801_map_try_role(wusb3801->cap.prefer_role) |
 			    wusb3801_map_pwr_opmode(wusb3801->pwr_opmode) |
-			    wusb3801_map_port_type(wusb3801->port_type));
+			    wusb3801_map_port_type(wusb3801->port_type) |
+			    (wusb3801->has_irq ? 0 : WUSB3801_CTRL0_INT_MASK));
 }
 
 static void wusb3801_hw_update(struct wusb3801 *wusb3801)
@@ -233,17 +237,19 @@ static void wusb3801_hw_update(struct wusb3801 *wusb3801)
 
 	partner_type = status & WUSB3801_STAT_PARTNER;
 
-	if (partner_type == WUSB3801_STAT_PARTNER_SNK) {
-		if (!wusb3801->vbus_on) {
-			ret = regulator_enable(wusb3801->vbus_supply);
-			if (ret)
-				dev_warn(dev, "Failed to enable VBUS: %d\n", ret);
-			wusb3801->vbus_on = true;
-		}
-	} else {
-		if (wusb3801->vbus_on) {
-			regulator_disable(wusb3801->vbus_supply);
-			wusb3801->vbus_on = false;
+	if (wusb3801->vbus_supply) {
+		if (partner_type == WUSB3801_STAT_PARTNER_SNK) {
+			if (!wusb3801->vbus_on) {
+				ret = regulator_enable(wusb3801->vbus_supply);
+				if (ret)
+					dev_warn(dev, "Failed to enable VBUS: %d\n", ret);
+				wusb3801->vbus_on = true;
+			}
+		} else {
+			if (wusb3801->vbus_on) {
+				regulator_disable(wusb3801->vbus_supply);
+				wusb3801->vbus_on = false;
+			}
 		}
 	}
 
@@ -313,6 +319,15 @@ static irqreturn_t wusb3801_irq(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+static void wusb3801_poll_work(struct work_struct *work)
+{
+	struct wusb3801 *wusb3801 = container_of(work, struct wusb3801,
+						 poll_work.work);
+
+	wusb3801_hw_update(wusb3801);
+	schedule_delayed_work(&wusb3801->poll_work, msecs_to_jiffies(2000));
+}
+
 static const struct regmap_config config = {
 	.reg_bits	= 8,
 	.val_bits	= 8,
@@ -339,9 +354,13 @@ static int wusb3801_probe(struct i2c_client *client)
 	if (IS_ERR(wusb3801->regmap))
 		return PTR_ERR(wusb3801->regmap);
 
-	wusb3801->vbus_supply = devm_regulator_get(dev, "vbus");
-	if (IS_ERR(wusb3801->vbus_supply))
-		return PTR_ERR(wusb3801->vbus_supply);
+	wusb3801->vbus_supply = devm_regulator_get_optional(dev, "vbus");
+	if (IS_ERR(wusb3801->vbus_supply)) {
+		if (PTR_ERR(wusb3801->vbus_supply) != -ENODEV)
+			return PTR_ERR(wusb3801->vbus_supply);
+		wusb3801->vbus_supply = NULL;
+	}
+	wusb3801->has_irq = client->irq > 0;
 
 	connector = device_get_named_child_node(dev, "connector");
 	if (!connector)
@@ -382,10 +401,16 @@ static int wusb3801_probe(struct i2c_client *client)
 	/* Initialize the port attributes from the hardware state. */
 	wusb3801_hw_update(wusb3801);
 
-	ret = request_threaded_irq(client->irq, NULL, wusb3801_irq,
-				   IRQF_ONESHOT, dev_name(dev), wusb3801);
-	if (ret)
-		goto err_unregister_port;
+	if (wusb3801->has_irq) {
+		ret = request_threaded_irq(client->irq, NULL, wusb3801_irq,
+					   IRQF_ONESHOT, dev_name(dev), wusb3801);
+		if (ret)
+			goto err_unregister_port;
+	} else {
+		INIT_DELAYED_WORK(&wusb3801->poll_work, wusb3801_poll_work);
+		schedule_delayed_work(&wusb3801->poll_work,
+				      msecs_to_jiffies(2000));
+	}
 
 	fwnode_handle_put(connector);
 
@@ -403,13 +428,16 @@ static void wusb3801_remove(struct i2c_client *client)
 {
 	struct wusb3801 *wusb3801 = i2c_get_clientdata(client);
 
-	free_irq(client->irq, wusb3801);
+	if (wusb3801->has_irq)
+		free_irq(client->irq, wusb3801);
+	else
+		cancel_delayed_work_sync(&wusb3801->poll_work);
 
 	if (wusb3801->partner)
 		typec_unregister_partner(wusb3801->partner);
 	typec_unregister_port(wusb3801->port);
 
-	if (wusb3801->vbus_on)
+	if (wusb3801->vbus_on && wusb3801->vbus_supply)
 		regulator_disable(wusb3801->vbus_supply);
 }
 

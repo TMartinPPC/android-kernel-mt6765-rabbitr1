@@ -1558,6 +1558,10 @@ static int bq256xx_hw_init(struct bq256xx_device *bq)
 {
 	struct power_supply_battery_info *bat_info;
 	int wd_reg_val = BQ256XX_WATCHDOG_DIS;
+	u32 ichg = bq->chip_info->bq256xx_def_ichg;
+	u32 vbatreg = bq->chip_info->bq256xx_def_vbatreg;
+	u32 iprechg = bq->chip_info->bq256xx_def_iprechg;
+	u32 iterm = bq->chip_info->bq256xx_def_iterm;
 	int ret = 0;
 	int i;
 
@@ -1607,6 +1611,17 @@ static int bq256xx_hw_init(struct bq256xx_device *bq)
 
 		bq->init_data.vbatreg_max =
 			bat_info->constant_charge_voltage_max_uv;
+
+		if (bat_info->constant_charge_current_max_ua > 0)
+			ichg = min_t(int, bat_info->constant_charge_current_max_ua,
+				     bq->chip_info->bq256xx_max_ichg);
+		if (bat_info->constant_charge_voltage_max_uv > 0)
+			vbatreg = min_t(int, bat_info->constant_charge_voltage_max_uv,
+					bq->chip_info->bq256xx_max_vbatreg);
+		if (bat_info->precharge_current_ua > 0)
+			iprechg = bat_info->precharge_current_ua;
+		if (bat_info->charge_term_current_ua > 0)
+			iterm = bat_info->charge_term_current_ua;
 	}
 
 	ret = bq->chip_info->bq256xx_set_vindpm(bq, bq->init_data.vindpm);
@@ -1617,23 +1632,19 @@ static int bq256xx_hw_init(struct bq256xx_device *bq)
 	if (ret)
 		return ret;
 
-	ret = bq->chip_info->bq256xx_set_ichg(bq,
-				bq->chip_info->bq256xx_def_ichg);
+	ret = bq->chip_info->bq256xx_set_ichg(bq, ichg);
 	if (ret)
 		return ret;
 
-	ret = bq->chip_info->bq256xx_set_iprechg(bq,
-				bat_info->precharge_current_ua);
+	ret = bq->chip_info->bq256xx_set_iprechg(bq, iprechg);
 	if (ret)
 		return ret;
 
-	ret = bq->chip_info->bq256xx_set_vbatreg(bq,
-				bq->chip_info->bq256xx_def_vbatreg);
+	ret = bq->chip_info->bq256xx_set_vbatreg(bq, vbatreg);
 	if (ret)
 		return ret;
 
-	ret = bq->chip_info->bq256xx_set_iterm(bq,
-				bat_info->charge_term_current_ua);
+	ret = bq->chip_info->bq256xx_set_iterm(bq, iterm);
 	if (ret)
 		return ret;
 

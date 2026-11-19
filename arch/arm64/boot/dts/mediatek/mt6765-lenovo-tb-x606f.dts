@@ -7,6 +7,7 @@
 /dts-v1/;
 
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/iio/adc/mediatek,mt6357-auxadc.h>
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/pinctrl/mediatek,mt6765-pinfunc.h>
 #include "mt6765.dtsi"
@@ -68,6 +69,18 @@
 		regulator-max-microvolt = <1800000>;
 		regulator-boot-on;
 		regulator-always-on;
+	};
+
+	bat_pack: battery-pack {
+		compatible = "simple-battery";
+		device-chemistry = "lithium-ion";
+		charge-full-design-microamp-hours = <5100000>;
+		voltage-max-design-microvolt = <4400000>;
+		constant-charge-voltage-max-microvolt = <4400000>;
+		constant-charge-current-max-microamp = <2040000>;
+		precharge-current-microamp = <180000>;
+		charge-term-current-microamp = <180000>;
+		alert-celsius = <0 50>;
 	};
 
 	/delete-node/ rng;
@@ -212,6 +225,28 @@
 
 		/delete-node/ key-home;
 	};
+
+	bat_gauge: gauge {
+		compatible = "mediatek,mt6357-gauge";
+		power-supplies = <&bq25601>;
+		monitored-battery = <&bat_pack>;
+		shunt-resistor-micro-ohms = <10000>;
+		mediatek,current-gain-permille = <1000>;
+		io-channels = <&pmic_adc MT6357_AUXADC_ISENSE>,
+			      <&pmic_adc MT6357_AUXADC_BAT_TEMP>,
+			      <&pmic_adc MT6357_AUXADC_VBIF>;
+		io-channel-names = "battery-voltage", "battery-thermistor", "thermistor-reference";
+		mediatek,thermistor-pullup-ohms = <16900>;
+		mediatek,thermistor-series-micro-ohms = <10000>;
+		mediatek,thermistor-resistance-table =
+			<(-40000) 195652>, <(-35000) 148171>, <(-30000) 113347>,
+			<(-25000) 87559>, <(-20000) 68237>, <(-15000) 53650>,
+			<(-10000) 42506>, <(-5000) 33892>, <0 27219>,
+			<5000 22021>, <10000 17926>, <15000 14674>,
+			<20000 12081>, <25000 10000>, <30000 8315>,
+			<35000 6948>, <40000 5834>, <45000 4917>,
+			<50000 4161>, <55000 3535>, <60000 3014>;
+	};
 };
 
 &mt6357_vdram_reg {
@@ -306,6 +341,32 @@
 			enable-gpios = <&pio 168 GPIO_ACTIVE_HIGH>;
 		};
 	};
+
+	wusb3801: typec@60 {
+		compatible = "willsemi,wusb3801";
+		reg = <0x60>;
+
+		connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			power-role = "dual";
+			try-power-role = "sink";
+			data-role = "dual";
+			typec-power-opmode = "default";
+		};
+	};
+
+	bq25601: charger@6b {
+		compatible = "ti,bq25601";
+		reg = <0x6b>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&x606f_chg_pins>;
+		interrupt-parent = <&pio>;
+		interrupts = <2 IRQ_TYPE_EDGE_FALLING>;
+		monitored-battery = <&bat_pack>;
+		input-current-limit-microamp = <2000000>;
+		input-voltage-limit-microvolt = <4500000>;
+	};
 };
 
 &dsi_phy {
@@ -396,6 +457,13 @@
 			input-enable;
 			input-schmitt-enable;
 			bias-pull-up = <MTK_PUPD_SET_R1R0_10>;
+		};
+	};
+	x606f_chg_pins: chg-pins {
+		pins {
+			pinmux = <PINMUX_GPIO2__FUNC_GPIO2>;
+			input-enable;
+			bias-pull-up;
 		};
 	};
 	x606f_i2c5_pins: i2c5-pins {

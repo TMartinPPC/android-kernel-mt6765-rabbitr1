@@ -7,6 +7,7 @@
 #include <linux/delay.h>
 #include <linux/pm.h>
 #include <linux/iio/consumer.h>
+#include <linux/i2c.h>
 #include <linux/iio/iio.h>
 #include <linux/ktime.h>
 #include <linux/math64.h>
@@ -1390,10 +1391,28 @@ static int mt6357_gauge_init_adc(struct mt6357_gauge *gauge)
 	return 0;
 }
 
+static struct device *mt6357_gauge_find_supplier_dev(struct device_node *node)
+{
+	struct platform_device *pdev;
+	struct i2c_client *client;
+
+	pdev = of_find_device_by_node(node);
+	if (pdev)
+		return &pdev->dev;
+
+	if (IS_ENABLED(CONFIG_I2C)) {
+		client = of_find_i2c_device_by_node(node);
+		if (client)
+			return &client->dev;
+	}
+
+	return NULL;
+}
+
 static int mt6357_gauge_init_status(struct mt6357_gauge *gauge)
 {
 	struct device *dev = gauge->dev;
-	struct platform_device *provider;
+	struct device *provider_dev;
 	struct device_node *node;
 	struct power_supply *charger;
 	int ret;
@@ -1407,24 +1426,24 @@ static int mt6357_gauge_init_status(struct mt6357_gauge *gauge)
 	node = of_parse_phandle(dev->of_node, "power-supplies", 0);
 	if (!node)
 		return -EINVAL;
-	provider = of_find_device_by_node(node);
+	provider_dev = mt6357_gauge_find_supplier_dev(node);
 	of_node_put(node);
-	if (!provider)
+	if (!provider_dev)
 		return -EPROBE_DEFER;
 	ret = -EINVAL;
-	if (&provider->dev == dev)
+	if (provider_dev == dev)
 		goto put_provider;
 	ret = -EPROBE_DEFER;
-	if (!device_trylock(&provider->dev))
+	if (!device_trylock(provider_dev))
 		goto put_provider;
-	if (!device_is_bound(&provider->dev) ||
-	    READ_ONCE(provider->dev.links.status) != DL_DEV_DRIVER_BOUND)
+	if (!device_is_bound(provider_dev) ||
+	    READ_ONCE(provider_dev->links.status) != DL_DEV_DRIVER_BOUND)
 		goto unlock_provider;
 	ret = -ENOMEM;
-	if (!device_link_add(dev, &provider->dev, DL_FLAG_AUTOREMOVE_CONSUMER))
+	if (!device_link_add(dev, provider_dev, DL_FLAG_AUTOREMOVE_CONSUMER))
 		goto unlock_provider;
 	/* Retain the supplier before looking up or using its power supply. */
-	charger = devm_power_supply_get_by_parent(dev, &provider->dev);
+	charger = devm_power_supply_get_by_parent(dev, provider_dev);
 	if (IS_ERR(charger)) {
 		ret = PTR_ERR(charger);
 		goto unlock_provider;
@@ -1435,9 +1454,9 @@ static int mt6357_gauge_init_status(struct mt6357_gauge *gauge)
 	gauge->charger = charger;
 	ret = 0;
 unlock_provider:
-	device_unlock(&provider->dev);
+	device_unlock(provider_dev);
 put_provider:
-	put_device(&provider->dev);
+	put_device(provider_dev);
 	if (ret)
 		return ret;
 	ret = devm_mutex_init(dev, &gauge->status_lock);
