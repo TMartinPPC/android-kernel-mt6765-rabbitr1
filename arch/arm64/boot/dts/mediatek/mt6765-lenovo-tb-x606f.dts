@@ -1,0 +1,364 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+/*
+ * Lenovo Tab M10 FHD Plus (TB-X606F / achilles6_row_wifi) Stage 1 First Light DTS.
+ * SoC: MT8768WT (MT6765 family) + MT6357 PMIC.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/pinctrl/mediatek,mt6765-pinfunc.h>
+#include "mt6765.dtsi"
+#include "mt6357.dtsi"
+
+/ {
+	model = "Lenovo Tab M10 FHD Plus (TB-X606F)";
+	compatible = "lenovo,tb-x606f", "mediatek,mt6765";
+	chassis-type = "tablet";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen: chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+		bootargs = "console=tty0";
+		kaslr-seed = <0x00 0x00>;
+		stdout-path = "serial0:921600n8";
+
+		framebuffer0: framebuffer@7dfe0000 {
+			compatible = "simple-framebuffer";
+			reg = <0x00 0x7dfe0000 0x00 0x1f20000>;
+			width = <1200>;
+			height = <1920>;
+			stride = <4864>;
+			format = "a8r8g8b8";
+			status = "okay";
+		};
+	};
+
+	/* LK updates /memory reg at boot. */
+	memory@40000000 {
+		device_type = "memory";
+		reg = <0 0x40000000 0 0x20000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		ramoops@6ff00000 {
+			compatible = "ramoops";
+			no-map;
+			reg = <0 0x6ff00000 0 0xe0000>;
+			record-size = <0x40000>;
+			console-size = <0x40000>;
+			pmsg-size = <0x10000>;
+		};
+	};
+
+	/delete-node/ rng;
+	/delete-node/ thermal-zones;
+
+	cpus {
+		/delete-node/ idle-states;
+	};
+
+	/* Stock LK checks for mediatek,scp and scp_sramSize before booting. */
+	scp@10500000 {
+		compatible = "mediatek,scp";
+		status = "okay";
+		core_1 = "enable";
+		scp_sramSize = <0x40000>;
+	};
+
+	/*
+	 * Stock LK asserts ufdt_apply_overlay() on the on-device dtbo[0] partition.
+	 * Provide __symbols__ targets for all 4.19/vendor labels referenced by dtbo[0]
+	 * inside a non-bus sink node so Linux ignores them (keeping real /reserved-memory
+	 * and disabled mmc0/mmc1 untouched).
+	 */
+	/* Stock LK leds_init() looks up /odm/led@0..6; omit simple-bus so Linux does not probe vendor children. */
+	odm: odm { };
+
+	lk-dtbo-sink {
+		reserved_memory: reserved-memory-sink { };
+		regulator_vibrator: regulator-vibrator { };
+		mt_pmic_vibr_ldo_reg: mt-pmic-vibr-ldo-reg { };
+		touch: touch { };
+		charger: charger { };
+		consys: consys { };
+		accdet: accdet { };
+		irtx_pwm: irtx-pwm { };
+		audgpio: audgpio { };
+		mtkfb: mtkfb { };
+		mtk_charger_type: mtk-charger-type { };
+		camera_af_hw_node: camera-af-hw-node { };
+		mt_pmic_vldo28_ldo_reg: mt-pmic-vldo28-ldo-reg { };
+		mtk_gauge: mtk-gauge { };
+		pe: pe { };
+		pe2: pe2 { };
+		pe4: pe4 { };
+		pdc: pdc { };
+		usb: usb { };
+		toprgu: toprgu { };
+		pd_adapter: pd-adapter { };
+		pmic_clock_buffer_ctrl: pmic-clock-buffer-ctrl { };
+		i2c7: i2c7 { };
+		i2c8: i2c8 { };
+		i2c9: i2c9 { };
+		gpio_usage_mapping: gpio-usage-mapping { };
+		gpio: gpio { };
+		msdc1_ins: msdc1-ins { };
+		otg_iddig: otg-iddig { };
+		dsi_te: dsi-te { };
+		main_pmic: main-pmic { };
+		md1_sim1_hot_plug_eint: md1-sim1-hot-plug-eint { };
+		md1_sim2_hot_plug_eint: md1-sim2-hot-plug-eint { };
+		mt_pmic_vcama_ldo_reg: mt-pmic-vcama-ldo-reg { };
+		mt_pmic_vsim1_ldo_reg: mt-pmic-vsim1-ldo-reg { };
+		mt_pmic_vsim2_ldo_reg: mt-pmic-vsim2-ldo-reg { };
+		mt_pmic_vcamd_ldo_reg: mt-pmic-vcamd-ldo-reg { };
+		mt_pmic_vcamio_ldo_reg: mt-pmic-vcamio-ldo-reg { };
+		kd_camera_hw1: kd-camera-hw1 { };
+		msdc1: msdc1 { };
+	};
+};
+
+&cpu0 {
+	/delete-property/ cpu-idle-states;
+};
+&cpu1 {
+	/delete-property/ cpu-idle-states;
+};
+&cpu2 {
+	/delete-property/ cpu-idle-states;
+};
+&cpu3 {
+	/delete-property/ cpu-idle-states;
+};
+&cpu4 {
+	/delete-property/ cpu-idle-states;
+};
+&cpu5 {
+	/delete-property/ cpu-idle-states;
+};
+&cpu6 {
+	/delete-property/ cpu-idle-states;
+};
+&cpu7 {
+	/delete-property/ cpu-idle-states;
+};
+
+&auxadc {
+	status = "okay";
+};
+
+&efuse {
+	compatible = "mediatek,mt6765-devinfo";
+};
+
+&soc_data {
+	status = "disabled";
+};
+
+/* Stage 1 isolation: disable non-essential SoC blocks until USB + FB are up. */
+/* Disabling mmsys makes mtk-power-controller fail DISP clk lookup and tear down DPY (DRAM). */
+&spm {
+	status = "disabled";
+};
+
+&dvfsrc {
+	status = "disabled";
+};
+
+&iommu {
+	status = "disabled";
+};
+
+&gce {
+	status = "disabled";
+};
+
+&mcdi {
+	status = "disabled";
+};
+
+&thermal {
+	status = "disabled";
+};
+
+&mmsys {
+	status = "disabled";
+};
+
+&disp_mutex {
+	status = "disabled";
+};
+
+&smi_common {
+	status = "disabled";
+};
+
+&smi_larb0 {
+	status = "disabled";
+};
+
+&smi_larb1 {
+	status = "disabled";
+};
+
+&smi_larb2 {
+	status = "disabled";
+};
+
+&smi_larb3 {
+	status = "disabled";
+};
+
+&ovl0 {
+	status = "disabled";
+};
+
+&ovl_2l0 {
+	status = "disabled";
+};
+
+&rdma0 {
+	status = "disabled";
+};
+
+&wdma0 {
+	status = "disabled";
+};
+
+&color0 {
+	status = "disabled";
+};
+
+&ccorr0 {
+	status = "disabled";
+};
+
+&aal0 {
+	status = "disabled";
+};
+
+&gamma0 {
+	status = "disabled";
+};
+
+&dither0 {
+	status = "disabled";
+};
+
+&uart0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&x606f_uart0_pins>;
+	status = "okay";
+};
+
+&pwrap {
+	status = "okay";
+};
+
+&mt6357_pmic {
+	interrupt-controller;
+	interrupt-parent = <&pio>;
+	interrupts = <144 IRQ_TYPE_LEVEL_HIGH>;
+	#interrupt-cells = <2>;
+
+	rtc {
+		mode-bootloader = <0x2000>;
+	};
+
+	keys {
+		mediatek,long-press-mode = <1>;
+		power-off-time-sec = <0>;
+
+		key-home {
+			linux,keycodes = <KEY_VOLUMEUP>;
+			wakeup-source;
+		};
+	};
+};
+
+&mt6357_vdram_reg {
+	regulator-always-on;
+};
+
+&mt6357_vusb33_reg {
+	regulator-always-on;
+};
+
+&mt6357_vaux18_reg {
+	regulator-always-on;
+};
+
+&mt6357_vio28_reg {
+	regulator-always-on;
+};
+
+&mt6357_vproc_reg {
+	regulator-min-microvolt = <800000>;
+	regulator-max-microvolt = <1200000>;
+};
+
+&mt6357_vsram_proc_reg {
+	regulator-min-microvolt = <900000>;
+	regulator-max-microvolt = <1200000>;
+};
+
+/*
+ * Stage 1: lock USB2 in peripheral mode so MUSB + NCM/ACM gadget comes up
+ * immediately without waiting for Type-C TCPC bring-up.
+ */
+&u2phy {
+	status = "okay";
+};
+
+
+&i2c5 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&x606f_i2c5_pins>;
+	clock-frequency = <400000>;
+	mediatek,use-open-drain;
+	status = "okay";
+};
+
+&usb2 {
+	assigned-clocks = <&topckgen CLK_TOP_USB_TOP_SEL>;
+	assigned-clock-parents = <&topckgen CLK_TOP_UNIVPLL3_D4>;
+	dr_mode = "peripheral";
+	maximum-speed = "high-speed";
+	status = "okay";
+};
+
+/* Stage 1 safety: keep internal eMMC and SD card disabled until RAM-only SSH works. */
+&mmc0 {
+	status = "disabled";
+};
+
+&mmc1 {
+	status = "disabled";
+};
+
+&pio {
+	x606f_uart0_pins: uart0-pins {
+		pins {
+			pinmux = <PINMUX_GPIO95__FUNC_URXD0>,
+				 <PINMUX_GPIO96__FUNC_UTXD0>;
+		};
+	};
+	x606f_i2c5_pins: i2c5-pins {
+		pins {
+			pinmux = <PINMUX_GPIO48__FUNC_SCL5>,
+				 <PINMUX_GPIO49__FUNC_SDA5>;
+			bias-pull-up;
+		};
+	};
+};
