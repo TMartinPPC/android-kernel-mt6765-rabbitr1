@@ -383,6 +383,17 @@
 	/* Stock LK leds_init() looks up /odm/led@0..6; omit simple-bus so Linux does not probe vendor children. */
 	odm: odm { };
 
+	/* Stock LK kpd_init_dts() looks up /kp@10010000; omit compatible so Linux ignores it. */
+	kp@10010000 {
+		mediatek,kpd-sw-pwrkey = <116>;
+		mediatek,kpd-hw-pwrkey = <8>;
+		mediatek,kpd-use-extend-type = <0>;
+		mediatek,kpd-hw-map-num = <72>;
+		mediatek,kpd-hw-init-map = <115 114 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0>;
+		mediatek,kpd-hw-recovery-key = <0>;
+		mediatek,kpd-hw-factory-key = <1>;
+	};
+
 	/*
 	 * Stock LK asserts ufdt_apply_overlay() on the on-device dtbo[0] partition.
 	 * Provide __symbols__ targets for all 4.19/vendor labels referenced by dtbo[0]
