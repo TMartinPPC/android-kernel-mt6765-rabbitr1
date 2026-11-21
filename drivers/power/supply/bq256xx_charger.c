@@ -1536,8 +1536,6 @@ static const struct bq256xx_chip_info bq256xx_chip_info_tbl[] = {
 static int bq256xx_power_supply_init(struct bq256xx_device *bq,
 		struct power_supply_config *psy_cfg, struct device *dev)
 {
-	struct power_supply_config bat_cfg = *psy_cfg;
-
 	bq->charger = devm_power_supply_register(bq->dev,
 						 &bq256xx_power_supply_desc,
 						 psy_cfg);
@@ -1546,18 +1544,6 @@ static int bq256xx_power_supply_init(struct bq256xx_device *bq,
 		return PTR_ERR(bq->charger);
 	}
 
-	/*
-	 * Only bq->charger should carry the DT node so power-supplies = <&bq25601>
-	 * resolves unambiguously to the charger without overflowing supplied_from.
-	 */
-	bat_cfg.fwnode = NULL;
-	bq->battery = devm_power_supply_register(bq->dev,
-						      &bq256xx_battery_desc,
-						      &bat_cfg);
-	if (IS_ERR(bq->battery)) {
-		dev_err(dev, "power supply register battery failed\n");
-		return PTR_ERR(bq->battery);
-	}
 	return 0;
 }
 

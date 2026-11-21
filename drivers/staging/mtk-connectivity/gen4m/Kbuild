@@ -40,7 +40,7 @@ ccflags-y += -DCFG_SUPPORT_802_11BE=0
 ccflags-y += -DCFG_SUPPORT_WIFI_6G=0
 ccflags-y += -DCFG_SUPPORT_TWT=0
 ccflags-y += -DCFG_TWT_SMART_STA=0
-ccflags-y += -DCFG_DRIVER_INITIAL_RUNNING_MODE=3
+ccflags-y += -DCFG_DRIVER_INITIAL_RUNNING_MODE=0
 ccflags-y += -DCFG_SUPPORT_DUAL_STA=0
 ccflags-y += -DCFG_MTK_ANDROID_WMT=1
 ccflags-y += -DCFG_SUPPORT_CONNINFRA=0

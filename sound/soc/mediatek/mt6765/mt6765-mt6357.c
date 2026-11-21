@@ -51,13 +51,17 @@ static int mt6765_mt6357_spk_event(struct snd_soc_dapm_widget *w,
 			gpiod_set_value_cansleep(priv->spk_en_gpios->desc[i], 0);
 		usleep_range(1000, 2000);
 
-		for (pulse = 0; pulse < 3; pulse++) {
-			for (i = 0; i < priv->spk_en_gpios->ndescs; i++)
-				gpiod_set_value_cansleep(priv->spk_en_gpios->desc[i], 0);
-			udelay(1);
-			for (i = 0; i < priv->spk_en_gpios->ndescs; i++)
-				gpiod_set_value_cansleep(priv->spk_en_gpios->desc[i], 1);
-			udelay(1);
+		for (i = 0; i < priv->spk_en_gpios->ndescs; i++) {
+			unsigned long flags;
+
+			local_irq_save(flags);
+			for (pulse = 0; pulse < 3; pulse++) {
+				gpiod_set_value(priv->spk_en_gpios->desc[i], 0);
+				udelay(1);
+				gpiod_set_value(priv->spk_en_gpios->desc[i], 1);
+				udelay(1);
+			}
+			local_irq_restore(flags);
 		}
 		usleep_range(5000, 10000);
 	} else {

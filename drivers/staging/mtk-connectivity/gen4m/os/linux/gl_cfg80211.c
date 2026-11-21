@@ -5910,6 +5910,25 @@ enum regd_state regd_state_machine(IN struct regulatory_request *pRequest)
 }
 
 
+void mtk_apply_custom_regulatory(IN struct wiphy *pWiphy,
+				 IN const struct ieee80211_regdomain *pRegdom);
+
+struct mtk_custom_reg_work {
+	struct work_struct work;
+	struct wiphy *wiphy;
+	const struct ieee80211_regdomain *regdom;
+};
+
+static void mtk_apply_custom_regulatory_work(struct work_struct *work)
+{
+	struct mtk_custom_reg_work *ctx =
+		container_of(work, struct mtk_custom_reg_work, work);
+
+	mtk_apply_custom_regulatory(ctx->wiphy, ctx->regdom);
+	rlmDomainParsingChannel(ctx->wiphy);
+	kfree(ctx);
+}
+
 void
 mtk_apply_custom_regulatory(IN struct wiphy *pWiphy,
 			    IN const struct ieee80211_regdomain *pRegdom)
@@ -5919,6 +5938,25 @@ mtk_apply_custom_regulatory(IN struct wiphy *pWiphy,
 	struct ieee80211_channel *chan;
 
 	DBGLOG(RLM, INFO, "%s()\n", __func__);
+
+	/*
+	 * cfg80211 invokes reg_notifier under rtnl_lock(), and
+	 * wiphy_apply_custom_regulatory() acquires rtnl_lock() internally on
+	 * modern kernels. Defer when rtnl_lock() is already held to avoid a
+	 * self-deadlock on the regulatory kworker.
+	 */
+	if (rtnl_is_locked()) {
+		struct mtk_custom_reg_work *ctx;
+
+		ctx = kzalloc(sizeof(*ctx), GFP_ATOMIC);
+		if (!ctx)
+			return;
+		INIT_WORK(&ctx->work, mtk_apply_custom_regulatory_work);
+		ctx->wiphy = pWiphy;
+		ctx->regdom = pRegdom;
+		schedule_work(&ctx->work);
+		return;
+	}
 
 	/* to reset cha->flags*/
 	for (band_idx = 0; band_idx < KAL_NUM_BANDS; band_idx++) {

@@ -1176,6 +1176,29 @@ static int mt6357_gauge_read_health(struct mt6357_gauge *gauge,
 }
 #endif
 
+static int mt6357_gauge_read_ocv_capacity(struct power_supply *psy,
+					  struct mt6357_gauge *gauge, int *out)
+{
+	int status, voltage, temp = 250, cap, ret;
+
+	if (!psy->battery_info)
+		return -EINVAL;
+	if (gauge->charger && mt6357_gauge_read_status(gauge, &status) == 0 &&
+	    status == POWER_SUPPLY_STATUS_FULL) {
+		*out = 100;
+		return 0;
+	}
+	ret = mt6357_gauge_read_voltage(gauge, &voltage);
+	if (ret)
+		return ret;
+	mt6357_gauge_read_temperature(gauge, &temp);
+	cap = power_supply_batinfo_ocv2cap(psy->battery_info, voltage, temp / 10);
+	if (cap < 0)
+		return cap;
+	*out = clamp(cap, 0, 100);
+	return 0;
+}
+
 static int mt6357_gauge_get_property(struct power_supply *psy,
 				     enum power_supply_property psp,
 				     union power_supply_propval *val)
@@ -1211,6 +1234,8 @@ static int mt6357_gauge_get_property(struct power_supply *psy,
 		return mt6357_gauge_read_voltage(gauge, &val->intval);
 	case POWER_SUPPLY_PROP_TEMP:
 		return mt6357_gauge_read_temperature(gauge, &val->intval);
+	case POWER_SUPPLY_PROP_CAPACITY:
+		return mt6357_gauge_read_ocv_capacity(psy, gauge, &val->intval);
 	default:
 		return -EINVAL;
 	}
@@ -1238,6 +1263,16 @@ static const enum power_supply_property mt6357_gauge_adc_status_properties[] = {
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_TEMP,
 	POWER_SUPPLY_PROP_STATUS,
+};
+
+static const enum power_supply_property mt6357_gauge_adc_status_cap_properties[] = {
+	POWER_SUPPLY_PROP_PRESENT,
+	POWER_SUPPLY_PROP_CURRENT_NOW,
+	POWER_SUPPLY_PROP_CHARGE_COUNTER,
+	POWER_SUPPLY_PROP_VOLTAGE_NOW,
+	POWER_SUPPLY_PROP_TEMP,
+	POWER_SUPPLY_PROP_STATUS,
+	POWER_SUPPLY_PROP_CAPACITY,
 };
 
 #if IS_ENABLED(CONFIG_BATTERY_MT6357_R1_SOC)
@@ -1273,6 +1308,9 @@ static const struct power_supply_desc mt6357_gauge_status_desc =
 static const struct power_supply_desc mt6357_gauge_adc_status_desc =
 	MT6357_GAUGE_DESC(mt6357_gauge_adc_status_properties,
 			  ARRAY_SIZE(mt6357_gauge_adc_status_properties));
+static const struct power_supply_desc mt6357_gauge_adc_status_cap_desc =
+	MT6357_GAUGE_DESC(mt6357_gauge_adc_status_cap_properties,
+			  ARRAY_SIZE(mt6357_gauge_adc_status_cap_properties));
 
 #undef MT6357_GAUGE_DESC
 
@@ -1528,6 +1566,16 @@ static int mt6357_gauge_probe(struct platform_device *pdev)
 	if (gauge->soc.enabled)
 		gauge->desc = &mt6357_gauge_soc_desc;
 #endif
+	if (gauge->desc == &mt6357_gauge_adc_status_desc) {
+		struct device_node *bat_np =
+			of_parse_phandle(dev->of_node, "monitored-battery", 0);
+
+		if (bat_np) {
+			if (of_property_present(bat_np, "ocv-capacity-table-0"))
+				gauge->desc = &mt6357_gauge_adc_status_cap_desc;
+			of_node_put(bat_np);
+		}
+	}
 	platform_set_drvdata(pdev, gauge);
 	config.drv_data = gauge;
 	config.fwnode = dev_fwnode(dev);

@@ -24,6 +24,7 @@
 #include <linux/kernel.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
+#include <linux/string.h>
 
 #define HIMAX_MAX_POINTS		10
 
@@ -356,6 +357,9 @@ static bool himax_verify_checksum(struct himax_ts_data *ts,
 	int i;
 	u16 checksum = 0;
 
+	if (!memchr_inv(data, 0, sizeof(*event)))
+		return false;
+
 	for (i = 0; i < sizeof(*event); i++)
 		checksum += data[i];
 
@@ -373,6 +377,30 @@ static int himax_read_events(struct himax_ts_data *ts,
 {
 	return regmap_raw_read(ts->regmap, HIMAX_AHB_ADDR_EVENT_STACK, event,
 			       length);
+}
+
+/*
+ * HX83102E/P firmware with pen support appends a 12-byte stylus block after
+ * the 56-byte touch event in the event stack (68 bytes total). Reading only
+ * 56 bytes leaves the 12-byte pen block in the FIFO so the level-low IRQ
+ * immediately re-fires and parses the 12-byte tail (+ 44 zero bytes, whose
+ * own checksum sums to 0) as a bogus 0-finger lift event.
+ */
+#define HX83102E_PEN_INFO_SIZE		12
+
+static int hx83102e_read_events(struct himax_ts_data *ts,
+				struct himax_event *event, size_t length)
+{
+	u8 buf[sizeof(*event) + HX83102E_PEN_INFO_SIZE];
+	int error;
+
+	error = regmap_raw_read(ts->regmap, HIMAX_AHB_ADDR_EVENT_STACK, buf,
+				sizeof(buf));
+	if (error)
+		return error;
+
+	memcpy(event, buf, length);
+	return 0;
 }
 
 static int hx83100a_read_events(struct himax_ts_data *ts,
@@ -602,7 +630,7 @@ static const struct himax_chip hx83102e_chip = {
 	.post_reset_ms = 50,
 	.check_id = himax_check_product_id,
 	.init = hx83102e_init,
-	.read_events = himax_read_events,
+	.read_events = hx83102e_read_events,
 };
 
 static const struct himax_chip hx83112b_chip = {

@@ -108,8 +108,17 @@
 		compatible = "simple-battery";
 		device-chemistry = "lithium-ion";
 		charge-full-design-microamp-hours = <5100000>;
+		voltage-min-design-microvolt = <3400000>;
 		voltage-max-design-microvolt = <4400000>;
 		constant-charge-voltage-max-microvolt = <4400000>;
+		ocv-capacity-celsius = <25>;
+		ocv-capacity-table-0 =
+			<4350000 100>, <4285000 95>, <4225000 90>, <4168000 85>,
+			<4114000 80>, <4062000 75>, <4013000 70>, <3966000 65>,
+			<3922000 60>, <3881000 55>, <3844000 50>, <3813000 45>,
+			<3788000 40>, <3768000 35>, <3751000 30>, <3734000 25>,
+			<3712000 20>, <3684000 15>, <3648000 10>, <3580000 5>,
+			<3400000 0>;
 		constant-charge-current-max-microamp = <2040000>;
 		precharge-current-microamp = <180000>;
 		charge-term-current-microamp = <180000>;
