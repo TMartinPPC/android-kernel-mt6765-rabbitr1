@@ -125,10 +125,6 @@
 		alert-celsius = <0 50>;
 	};
 
-	cpus {
-		/delete-node/ idle-states;
-	};
-
 	cluster0_opp: opp-table-cluster0 {
 		compatible = "operating-points-v2";
 		opp-shared;
@@ -509,7 +505,6 @@
 	operating-points-v2 = <&cluster0_opp>;
 	proc-supply = <&mt6357_vproc_reg>;
 	sram-supply = <&mt6357_vsram_proc_reg>;
-	/delete-property/ cpu-idle-states;
 };
 
 &cpu1 {
@@ -519,7 +514,6 @@
 	operating-points-v2 = <&cluster0_opp>;
 	proc-supply = <&mt6357_vproc_reg>;
 	sram-supply = <&mt6357_vsram_proc_reg>;
-	/delete-property/ cpu-idle-states;
 };
 
 &cpu2 {
@@ -529,7 +523,6 @@
 	operating-points-v2 = <&cluster0_opp>;
 	proc-supply = <&mt6357_vproc_reg>;
 	sram-supply = <&mt6357_vsram_proc_reg>;
-	/delete-property/ cpu-idle-states;
 };
 
 &cpu3 {
@@ -539,7 +532,6 @@
 	operating-points-v2 = <&cluster0_opp>;
 	proc-supply = <&mt6357_vproc_reg>;
 	sram-supply = <&mt6357_vsram_proc_reg>;
-	/delete-property/ cpu-idle-states;
 };
 
 &cpu4 {
@@ -549,7 +541,6 @@
 	operating-points-v2 = <&cluster1_opp>;
 	proc-supply = <&mt6357_vproc_reg>;
 	sram-supply = <&mt6357_vsram_proc_reg>;
-	/delete-property/ cpu-idle-states;
 };
 
 &cpu5 {
@@ -559,7 +550,6 @@
 	operating-points-v2 = <&cluster1_opp>;
 	proc-supply = <&mt6357_vproc_reg>;
 	sram-supply = <&mt6357_vsram_proc_reg>;
-	/delete-property/ cpu-idle-states;
 };
 
 &cpu6 {
@@ -569,7 +559,6 @@
 	operating-points-v2 = <&cluster1_opp>;
 	proc-supply = <&mt6357_vproc_reg>;
 	sram-supply = <&mt6357_vsram_proc_reg>;
-	/delete-property/ cpu-idle-states;
 };
 
 &cpu7 {
@@ -579,7 +568,6 @@
 	operating-points-v2 = <&cluster1_opp>;
 	proc-supply = <&mt6357_vproc_reg>;
 	sram-supply = <&mt6357_vsram_proc_reg>;
-	/delete-property/ cpu-idle-states;
 };
 
 &auxadc {
